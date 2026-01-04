@@ -45,8 +45,8 @@
     <header class="glass-header sticky top-0 z-50 border-b border-zinc-100">
         <div class="max-w-7xl mx-auto px-5 h-20 flex justify-between items-center">
             <div class="flex flex-col"><span class="text-2xl font-extrabold tracking-tighter text-zinc-900 italic leading-none">COZY</span><span class="text-[8px] font-black tracking-[0.5em] text-orange-500 uppercase">Cafe</span></div>
-            <button onclick="toggleCart(true)" class="relative p-3 bg-zinc-900 text-white rounded-2xl shadow-lg">
-                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z" /></svg>
+            <button id="cart-trigger-btn" onclick="toggleCart(true)" class="relative p-3 bg-zinc-900 text-white rounded-2xl shadow-lg transition-transform active:scale-90">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z" /></svg>
                 <span id="cart-count" class="absolute -top-1 -right-1 bg-orange-500 text-white text-[9px] w-5 h-5 flex items-center justify-center rounded-full border-2 border-white font-bold">0</span>
             </button>
         </div>
@@ -109,7 +109,7 @@
         const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJqeW1nd2h0aHZ3d3VwYmlzbnB3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjcxNzc4MjMsImV4cCI6MjA4Mjc1MzgyM30.B3cp2YE1iYF1m7OxuzlN0NRLSzjzopgCzAI9450m_nw';
         const _supabase = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
-        let menuData = []; // Fetched from Supabase
+        let menuData = []; 
         let cart = [];
         let orders = [];
         let isAdminLoggedIn = false;
@@ -119,14 +119,13 @@
 
         window.addEventListener('hashchange', checkRoute);
         window.addEventListener('load', () => {
-            fetchMenu(); // Dynamic menu fetch
+            fetchMenu();
             checkRoute();
             fetchOrders();
             setInterval(fetchOrders, 4000); 
-            setInterval(fetchMenu, 10000); // Live price/availability update
+            setInterval(fetchMenu, 10000); 
         });
 
-        // 1. Fetch Menu from Supabase
         async function fetchMenu() {
             const { data, error } = await _supabase.from('menu_items').select('*').order('id', { ascending: true });
             if (!error && data) {
@@ -156,7 +155,6 @@
             `).join('');
         }
 
-        // 2. Admin Menu Management Logic
         async function updateMenuField(id, field, value) {
             const { error } = await _supabase.from('menu_items').update({ [field]: value }).eq('id', id);
             if (!error) fetchMenu();
@@ -186,7 +184,6 @@
             document.getElementById('tab-menu').className = tab === 'menu' ? 'px-6 py-2 rounded-full bg-zinc-900 text-white font-bold text-sm' : 'px-6 py-2 rounded-full bg-zinc-100 text-zinc-400 font-bold text-sm';
         }
 
-        // --- Original Core Logic (Kept Same) ---
         async function fetchOrders() {
             const { data, error } = await _supabase.from('orders').select('*').order('id', { ascending: false });
             if (!error && data) {
@@ -221,10 +218,21 @@
 
         function checkRoute() {
             const h = window.location.hash;
-            document.getElementById('customer-panel').classList.toggle('hidden', h === '#admin');
-            document.getElementById('admin-login-panel').classList.toggle('hidden', h !== '#admin' || isAdminLoggedIn);
-            document.getElementById('admin-panel').classList.toggle('hidden', h !== '#admin' || !isAdminLoggedIn);
-            if(isAdminLoggedIn) { renderAdmin(); renderAdminMenu(); }
+            const isAtAdmin = h === '#admin';
+            
+            // UI Toggle
+            document.getElementById('customer-panel').classList.toggle('hidden', isAtAdmin);
+            document.getElementById('admin-login-panel').classList.toggle('hidden', !isAtAdmin || isAdminLoggedIn);
+            document.getElementById('admin-panel').classList.toggle('hidden', !isAtAdmin || !isAdminLoggedIn);
+            
+            // REMOVE BASKET ACCESS FOR ADMIN
+            document.getElementById('cart-trigger-btn').classList.toggle('hidden', isAtAdmin);
+            
+            if(isAdminLoggedIn && isAtAdmin) { 
+                renderAdmin(); 
+                renderAdminMenu(); 
+                toggleCart(false); // Force close cart if accidentally open
+            }
             renderCustomerStatus();
         }
 
@@ -258,7 +266,11 @@
         }
 
         function changeQty(i, d) { cart[i].qty += d; if(cart[i].qty < 1) cart.splice(i, 1); updateUI(); }
+        
         function toggleCart(s) { 
+            // Only allow opening cart if NOT in admin mode
+            if(s && window.location.hash === '#admin') return;
+            
             const side = document.getElementById('cart-sidebar');
             document.getElementById('cart-sidebar-overlay').classList.toggle('hidden', !s);
             side.style.transform = s ? 'translateX(0)' : 'translateX(100%)';
