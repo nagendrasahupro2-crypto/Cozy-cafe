@@ -125,12 +125,17 @@
         let cart = [];
         let orders = [];
         let isAdminLoggedIn = false;
-        let lastAdminHtml = ""; // Flicker prevention
+        
+        // Trackers to prevent flickering and sound loops
+        let lastOrderString = "";
+        const processedSounds = new Set();
 
+        // Updated Sounds
         const sentSound = new Audio('https://assets.mixkit.co/active_storage/sfx/2571/2571-preview.mp3');
         const readySound = new Audio('https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3');
         const adminOrderSound = new Audio('https://assets.mixkit.co/active_storage/sfx/2040/2040-preview.mp3'); 
-        const customerCancelSound = new Audio('https://assets.mixkit.co/active_storage/sfx/2513/2513-preview.mp3');
+        const customerCancelSound = new Audio('https://assets.mixkit.co/active_storage/sfx/1103/1103-preview.mp3'); // Distinct Cancel Sound
+        const adminCancelSound = new Audio('https://assets.mixkit.co/active_storage/sfx/2513/2513-preview.mp3'); // Distinct Admin Cancel sound
 
         window.addEventListener('hashchange', checkRoute);
         window.addEventListener('load', () => {
@@ -138,13 +143,17 @@
             checkRoute();
             fetchOrders();
             setInterval(fetchOrders, 3000); 
-            setInterval(fetchMenu, 10000); 
+            setInterval(fetchMenu, 15000); 
             setInterval(renderCustomerStatus, 1000); 
         });
 
         async function fetchMenu() {
             const { data, error } = await _supabase.from('menu_items').select('*').order('id', { ascending: true });
             if (!error && data) {
+                const menuString = JSON.stringify(data);
+                if (window.lastMenuString === menuString) return; 
+                window.lastMenuString = menuString;
+                
                 menuData = data;
                 renderMenu(menuData);
                 renderCategoryBar();
@@ -205,33 +214,43 @@
             if (!error && data) {
                 data.forEach(newO => {
                     const oldO = orders.find(o => o.id === newO.id);
+                    const soundKey = `${newO.id}-${newO.status}`;
                     
-                    // 1. NEW ORDER NOTIFICATION (ADMIN)
-                    if (!oldO && isAdminLoggedIn) {
-                        adminOrderSound.play().catch(e => {});
-                    }
-
-                    // 4. CUSTOMER CANCEL NOTIFICATION (ADMIN)
-                    if (oldO && oldO.status !== 'Cancelled' && newO.status === 'Cancelled' && isAdminLoggedIn) {
-                        customerCancelSound.play().catch(e => {});
-                        // Logic for "Order cancelled by customer" display is handled in the render loop filtering
-                    }
-
-                    // READY NOTIFICATION (CUSTOMER)
-                    if (oldO && oldO.status === 'Pending' && newO.status === 'Ready' && !isAdminLoggedIn && newO.device_id === DEVICE_ID) { 
-                        readySound.play().catch(e => {});
-                        const b = document.getElementById('ready-banner'); b.classList.remove('hidden'); setTimeout(()=>b.classList.add('hidden'), 4000);
-                    }
-
-                    // ADMIN CANCEL NOTIFICATION (CUSTOMER)
-                    if (oldO && oldO.status !== 'Cancelled' && newO.status === 'Cancelled' && !isAdminLoggedIn && newO.device_id === DEVICE_ID) {
-                        customerCancelSound.play().catch(e => {});
-                        const b = document.getElementById('cancel-banner'); b.classList.remove('hidden'); setTimeout(()=>b.classList.add('hidden'), 6000);
+                    if (isAdminLoggedIn) {
+                        // 1. New Order Notification (Admin Side)
+                        if (!oldO && !processedSounds.has(soundKey)) {
+                            adminOrderSound.play().catch(e => {});
+                            processedSounds.add(soundKey);
+                        }
+                        // 4. Customer Cancel Notification (Admin Side)
+                        if (oldO && oldO.status !== 'Cancelled' && newO.status === 'Cancelled' && !processedSounds.has(soundKey)) {
+                            customerCancelSound.play().catch(e => {});
+                            processedSounds.add(soundKey);
+                        }
+                    } else if (newO.device_id === DEVICE_ID) {
+                        // 2. Ready Notification (Customer Side)
+                        if (oldO && oldO.status === 'Pending' && newO.status === 'Ready' && !processedSounds.has(soundKey)) { 
+                            readySound.play().catch(e => {});
+                            const b = document.getElementById('ready-banner'); b.classList.remove('hidden'); setTimeout(()=>b.classList.add('hidden'), 4000);
+                            processedSounds.add(soundKey);
+                        }
+                        // 3. Admin Cancel Notification (Customer Side)
+                        if (oldO && oldO.status !== 'Cancelled' && newO.status === 'Cancelled' && !processedSounds.has(soundKey)) {
+                            adminCancelSound.play().catch(e => {});
+                            const b = document.getElementById('cancel-banner'); b.classList.remove('hidden'); setTimeout(()=>b.classList.add('hidden'), 5000);
+                            processedSounds.add(soundKey);
+                        }
                     }
                 });
-                orders = data;
-                renderCustomerStatus();
-                if(isAdminLoggedIn) renderAdmin();
+
+                // Prevention of Flicker: Only re-render if data actually changed
+                const currentOrderString = JSON.stringify(data);
+                if (lastOrderString !== currentOrderString) {
+                    orders = data;
+                    lastOrderString = currentOrderString;
+                    renderCustomerStatus();
+                    if(isAdminLoggedIn) renderAdmin();
+                }
             }
         }
 
@@ -258,11 +277,7 @@
             }
         }
 
-        // Logic for Admin Status Transition
-        async function updateOrderStatus(id, s) { 
-            await _supabase.from('orders').update({ status: s }).eq('id', id); 
-            fetchOrders(); 
-        }
+        async function updateOrderStatus(id, s) { await _supabase.from('orders').update({ status: s }).eq('id', id); fetchOrders(); }
 
         async function cancelOrder(id) {
             if(confirm("Are you sure you want to cancel?")) {
@@ -350,40 +365,36 @@
             }).join('');
         }
 
-        // Updated Admin Render with Button logic and Flicker Fix
         function renderAdmin() {
+            // Updated Admin Rendering with specific button flows
             const active = orders.filter(o => o.status !== 'Completed' && o.status !== 'Cancelled');
-            
-            const htmlContent = active.map(o => `
+            document.getElementById('admin-orders-list').innerHTML = active.map(o => {
+                const isCancelledByCust = o.status === 'Cancelled'; 
+                // Note: cancelled orders are filtered out from 'active', 
+                // but if we wanted to show 'Cancelled by Customer' we would handle it here.
+                
+                return `
                 <div class="bg-white p-6 rounded-[32px] border border-zinc-100 shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center gap-4 animate-fade">
                     <div class="flex-grow">
                         <div class="flex items-center gap-2 mb-2">
                             <span class="text-[10px] font-black px-2 py-1 bg-zinc-100 rounded-lg">#ORD-${o.id}</span>
                             <span class="text-[10px] font-black px-2 py-1 bg-zinc-50 text-zinc-400 rounded-lg">${o.device_id || 'OLD'}</span>
                         </div>
-                        <h4 class="text-xl font-black">${o.customer_name}</h4>
-                        <p class="text-xs text-zinc-500 mt-2">${o.item_name}</p>
+                        <h4 class="text-xl font-black">${o.customer_name}</h4><p class="text-xs text-zinc-500 mt-2">${o.item_name}</p>
                         <p class="text-sm font-bold text-zinc-900 mt-1">Bill: ₹${o.total_bill || '0'}</p>
                     </div>
                     
                     <div class="flex gap-2 w-full md:w-auto">
                         ${o.status === 'Pending' ? `
-                            <button onclick="updateOrderStatus(${o.id}, 'Ready')" class="flex-1 md:flex-none bg-zinc-900 text-white px-6 py-4 rounded-2xl font-bold text-xs uppercase shadow-lg transition-all active:scale-95">Ready</button>
-                            <button onclick="cancelOrder(${o.id})" class="flex-1 md:flex-none bg-red-100 text-red-600 px-6 py-4 rounded-2xl font-bold text-xs uppercase transition-all active:scale-95">Cancel</button>
+                            <button onclick="updateOrderStatus(${o.id}, 'Ready')" class="flex-1 md:flex-none bg-zinc-900 text-white px-6 py-4 rounded-2xl font-bold text-xs uppercase shadow-lg">Ready</button>
+                            <button onclick="cancelOrder(${o.id})" class="flex-1 md:flex-none bg-red-100 text-red-600 px-6 py-4 rounded-2xl font-bold text-xs uppercase">Cancel</button>
                         ` : o.status === 'Ready' ? `
-                            <button onclick="updateOrderStatus(${o.id}, 'Completed')" class="w-full md:w-auto bg-green-600 text-white px-8 py-4 rounded-2xl font-bold text-xs uppercase shadow-lg animate-pulse transition-all active:scale-95">Payment Done</button>
+                            <button onclick="updateOrderStatus(${o.id}, 'Completed')" class="w-full md:w-auto bg-green-600 text-white px-8 py-4 rounded-2xl font-bold text-xs uppercase shadow-lg">Payment Done</button>
                         ` : ''}
                     </div>
                 </div>
-            `).join('');
-
-            // Flicker Fix: Only update DOM if HTML content actually changed
-            if (htmlContent !== lastAdminHtml) {
-                document.getElementById('admin-orders-list').innerHTML = htmlContent || `
-                    <div class="text-center py-20 text-zinc-300 font-bold">No active orders in kitchen</div>
                 `;
-                lastAdminHtml = htmlContent;
-            }
+            }).join('');
         }
 
         function renderCategoryBar() {
