@@ -32,7 +32,7 @@
     <div id="cancel-banner" class="hidden fixed top-8 left-1/2 -translate-x-1/2 z-[200] w-[90%] max-w-sm">
         <div class="bg-red-600 text-white p-5 rounded-3xl shadow-2xl flex items-center gap-4 border border-white/10">
             <div class="h-10 w-10 bg-white rounded-full flex items-center justify-center text-xl">❌</div>
-            <div><p class="font-bold text-sm">Order Unavailable</p><p class="text-[10px] text-red-100">Sorry, your order is currently unavailable.</p></div>
+            <div><p class="font-bold text-sm">Order Unavailable</p><p class="text-[10px] text-red-100">Sorry, your order is currently unavailable. Please try something else.</p></div>
         </div>
     </div>
 
@@ -73,13 +73,16 @@
             <h2 class="text-4xl font-extrabold text-zinc-900">Admin</h2>
             <button onclick="location.hash=''" class="text-[10px] font-black uppercase text-zinc-400">Exit Admin</button>
         </div>
+
         <div class="flex gap-4 mb-8">
             <button onclick="switchAdminTab('orders')" id="tab-orders" class="px-6 py-2 rounded-full bg-zinc-900 text-white font-bold text-sm">Live Orders</button>
             <button onclick="switchAdminTab('menu')" id="tab-menu" class="px-6 py-2 rounded-full bg-zinc-100 text-zinc-400 font-bold text-sm">Manage Menu</button>
         </div>
+
         <div id="admin-orders-sec">
             <div id="admin-orders-list" class="grid gap-6"></div>
         </div>
+
         <div id="admin-menu-sec" class="hidden">
             <div id="admin-menu-list" class="grid gap-4"></div>
         </div>
@@ -122,13 +125,17 @@
         let cart = [];
         let orders = [];
         let isAdminLoggedIn = false;
+        
+        // Notification State Tracker
         const notifiedEvents = new Set();
         let lastKnownOrderData = "";
 
-        // Updated Sound Files
+        // Audio Elements
         const sounds = {
-            classicAlarm: new Audio('mixkit-classic-alarm-995.wav'),
-            gameOver: new Audio('mixkit-arcade-retro-game-over-213.wav'),
+            newOrder: new Audio('https://assets.mixkit.co/active_storage/sfx/2040/2040-preview.mp3'),
+            custCancelled: new Audio('https://assets.mixkit.co/active_storage/sfx/1103/1103-preview.mp3'), // Admin hears this
+            adminCancelled: new Audio('https://assets.mixkit.co/active_storage/sfx/2513/2513-preview.mp3'), // Cust hears this
+            orderReady: new Audio('https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3'),
             orderSent: new Audio('https://assets.mixkit.co/active_storage/sfx/2571/2571-preview.mp3')
         };
 
@@ -156,6 +163,8 @@
             const { data, error } = await _supabase.from('orders').select('*').order('id', { ascending: false });
             if (!error && data) {
                 processNotifications(data);
+                
+                // Anti-Flicker: Only update if content changed
                 const dataString = JSON.stringify(data);
                 if (dataString !== lastKnownOrderData) {
                     orders = data;
@@ -173,32 +182,32 @@
 
                 if (notifiedEvents.has(eventKey)) return;
 
-                // --- ADMIN PANEL SOUND LOGIC ---
+                // 1. ADMIN PANEL LOGIC
                 if (isAdminLoggedIn) {
-                    // 1. New Order (Admin gets Alarm)
+                    // New Order Sound (Admin Only)
                     if (!oldOrder) {
-                        sounds.classicAlarm.play().catch(() => {});
+                        sounds.newOrder.play().catch(() => {});
                         notifiedEvents.add(eventKey);
                     }
-                    // 2. Cancelled by Customer (Admin gets Game Over)
+                    // Customer Cancelled Sound (Admin Only)
                     else if (oldOrder.status !== 'Cancelled' && order.status === 'Cancelled' && order.cancelled_by === 'Customer') {
-                        sounds.gameOver.play().catch(() => {});
+                        sounds.custCancelled.play().catch(() => {});
                         notifiedEvents.add(eventKey);
                     }
                 } 
                 
-                // --- CUSTOMER PANEL SOUND LOGIC ---
+                // 2. CUSTOMER PANEL LOGIC
                 if (!isAdminLoggedIn && order.device_id === DEVICE_ID) {
-                    // 1. Order Ready (Customer gets Alarm)
-                    if (oldOrder && oldOrder.status === 'Pending' && order.status === 'Ready') {
-                        sounds.classicAlarm.play().catch(() => {});
-                        const b = document.getElementById('ready-banner'); b.classList.remove('hidden'); setTimeout(()=>b.classList.add('hidden'), 4000);
+                    // Admin Cancelled Sound (Customer Only)
+                    if (oldOrder && oldOrder.status !== 'Cancelled' && order.status === 'Cancelled' && order.cancelled_by === 'Admin') {
+                        sounds.adminCancelled.play().catch(() => {});
+                        const b = document.getElementById('cancel-banner'); b.classList.remove('hidden'); setTimeout(()=>b.classList.add('hidden'), 5000);
                         notifiedEvents.add(eventKey);
                     }
-                    // 2. Cancelled by Admin (Customer gets Game Over)
-                    else if (oldOrder && oldOrder.status !== 'Cancelled' && order.status === 'Cancelled' && order.cancelled_by === 'Admin') {
-                        sounds.gameOver.play().catch(() => {});
-                        const b = document.getElementById('cancel-banner'); b.classList.remove('hidden'); setTimeout(()=>b.classList.add('hidden'), 5000);
+                    // Order Ready Sound
+                    else if (oldOrder && oldOrder.status === 'Pending' && order.status === 'Ready') {
+                        sounds.orderReady.play().catch(() => {});
+                        const b = document.getElementById('ready-banner'); b.classList.remove('hidden'); setTimeout(()=>b.classList.add('hidden'), 4000);
                         notifiedEvents.add(eventKey);
                     }
                 }
@@ -227,6 +236,7 @@
             }
         }
 
+        // --- UPDATED CANCEL LOGIC TO IDENTIFY WHO CANCELLED ---
         async function cancelOrder(id) {
             if(confirm("Are you sure?")) {
                 const initiator = isAdminLoggedIn ? 'Admin' : 'Customer';
@@ -246,11 +256,13 @@
         function renderAdmin() {
             const active = orders.filter(o => o.status !== 'Completed' && o.status !== 'Cancelled');
             const adminList = document.getElementById('admin-orders-list');
+            
             adminList.innerHTML = active.map(o => `
                 <div class="bg-white p-6 rounded-[32px] border border-zinc-100 shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center gap-4 animate-fade">
                     <div class="flex-grow">
                         <div class="flex items-center gap-2 mb-2">
                             <span class="text-[10px] font-black px-2 py-1 bg-zinc-100 rounded-lg">#ORD-${o.id}</span>
+                            <span class="text-[10px] font-black px-2 py-1 bg-zinc-50 text-zinc-400 rounded-lg">${o.device_id || 'OLD'}</span>
                         </div>
                         <h4 class="text-xl font-black">${o.customer_name}</h4><p class="text-xs text-zinc-500 mt-2">${o.item_name}</p>
                         <p class="text-sm font-bold text-zinc-900 mt-1">Bill: ₹${o.total_bill || '0'}</p>
@@ -265,15 +277,26 @@
                     </div>
                 </div>
             `).join('');
+
+            // Special Message for Customer-Cancelled Orders in Admin
+            const custCancelled = orders.filter(o => o.status === 'Cancelled' && o.cancelled_by === 'Customer');
+            custCancelled.forEach(o => {
+                if(!notifiedEvents.has(`${o.id}-msg`)){
+                    console.log(`Order ${o.id} was cancelled by customer.`);
+                    notifiedEvents.add(`${o.id}-msg`);
+                }
+            });
         }
 
         function renderCustomerStatus() {
             const active = orders.filter(o => (o.status !== 'Completed' && o.status !== 'Cancelled') && o.device_id === DEVICE_ID);
             const statusBox = document.getElementById('customer-order-status');
             statusBox.classList.toggle('hidden', active.length === 0);
+            
             document.getElementById('status-list').innerHTML = active.map(o => {
                 const diffSeconds = Math.floor((Date.now() - new Date(o.created_at).getTime()) / 1000);
                 const canCancel = diffSeconds < 45 && o.status === 'Pending';
+
                 return `
                 <div class="bg-white border p-4 rounded-2xl flex flex-col gap-3 shadow-sm animate-fade">
                     <div class="flex justify-between items-center">
@@ -289,6 +312,7 @@
             }).join('');
         }
 
+        // --- STANDARD UTILITY FUNCTIONS ---
         function renderMenu(items) {
             document.getElementById('menu-grid').innerHTML = items.map(item => `
                 <div class="item-card bg-white rounded-[32px] p-4 border border-zinc-100 shadow-sm animate-fade ${!item.is_available ? 'opacity-50 grayscale' : ''}">
