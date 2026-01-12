@@ -118,6 +118,7 @@
         let cart = [];
         let orders = [];
         let isAdminLoggedIn = false;
+        let lastPlayedOrderId = 0; // Track last played sound
 
         const sentSound = new Audio('https://assets.mixkit.co/active_storage/sfx/2571/2571-preview.mp3');
         const readySound = new Audio('https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3');
@@ -129,11 +130,9 @@
             fetchOrders();
             setInterval(fetchOrders, 4000); 
             setInterval(fetchMenu, 10000); 
-            // Update Admin and Customer status every second for timers
-            setInterval(() => {
-                renderCustomerStatus();
-                if(isAdminLoggedIn) renderAdmin();
-            }, 1000); 
+            setInterval(renderCustomerStatus, 1000); 
+            // Update admin view every second for cancel timer
+            setInterval(() => { if(isAdminLoggedIn) renderAdmin(); }, 1000); 
         });
 
         async function fetchMenu() {
@@ -197,6 +196,15 @@
         async function fetchOrders() {
             const { data, error } = await _supabase.from('orders').select('*').order('id', { ascending: false });
             if (!error && data) {
+                // 1. New Order Sound Logic (Admin side only)
+                if (isAdminLoggedIn && data.length > 0) {
+                    const latestOrder = data[0];
+                    if (latestOrder.id > lastPlayedOrderId && latestOrder.status === 'Pending') {
+                        sentSound.play().catch(e => {}); // Play notification sound once
+                        lastPlayedOrderId = latestOrder.id; // Avoid replay on refresh
+                    }
+                }
+
                 data.forEach(newO => {
                     const oldO = orders.find(o => o.id === newO.id);
                     if (oldO && oldO.status === 'Pending' && newO.status === 'Ready' && !isAdminLoggedIn && newO.device_id === DEVICE_ID) { 
@@ -211,11 +219,12 @@
         }
 
         async function sendOrder() {
-            const name = document.getElementById('cust-name').value.trim();
-            if(!name || cart.length === 0) return alert("Missing Info");
+            const nameInput = document.getElementById('cust-name');
+            const name = nameInput.value.trim();
+            if(!name || cart.length === 0) return alert("Please enter your name and add items to the basket.");
             const itemsText = cart.map(it => `${it.name} x${it.qty}${it.note ? ` (${it.note})` : ''}`).join(', ');
             const totalQty = cart.reduce((s,i) => s + i.qty, 0);
-            const bill = cart.reduce((s,i) => s + (i.price*i.qty), 0); 
+            const bill = cart.reduce((s,i) => s + (i.price*i.qty), 0);
 
             const { error } = await _supabase.from('orders').insert([{ 
                 customer_name: name, 
@@ -249,7 +258,13 @@
             document.getElementById('admin-login-panel').classList.toggle('hidden', !isAtAdmin || isAdminLoggedIn);
             document.getElementById('admin-panel').classList.toggle('hidden', !isAtAdmin || !isAdminLoggedIn);
             document.getElementById('cart-trigger-btn').classList.toggle('hidden', isAtAdmin);
-            if(isAdminLoggedIn && isAtAdmin) { renderAdmin(); renderAdminMenu(); toggleCart(false); }
+            if(isAdminLoggedIn && isAtAdmin) { 
+                // Initialize lastPlayedOrderId with existing max ID to prevent old orders from ringing
+                if(lastPlayedOrderId === 0 && orders.length > 0) lastPlayedOrderId = orders[0].id;
+                renderAdmin(); 
+                renderAdminMenu(); 
+                toggleCart(false); 
+            }
             renderCustomerStatus();
         }
 
@@ -297,7 +312,8 @@
             
             document.getElementById('status-list').innerHTML = active.map(o => {
                 const createdTime = new Date(o.created_at).getTime();
-                const diffSeconds = Math.floor((new Date().getTime() - createdTime) / 1000);
+                const now = new Date().getTime();
+                const diffSeconds = Math.floor((now - createdTime) / 1000);
                 const canCancel = diffSeconds < 45 && o.status === 'Pending';
 
                 return `
@@ -310,46 +326,46 @@
                         </div>
                         <span class="px-4 py-2 rounded-full text-[10px] font-black uppercase ${o.status === 'Ready' ? 'bg-green-100 text-green-600 animate-pulse' : 'bg-orange-100 text-orange-600'}">${o.status}</span>
                     </div>
-                    ${canCancel ? `<button onclick="cancelOrder(${o.id})" class="w-full bg-red-50 text-red-500 py-2 rounded-xl text-[10px] font-black uppercase border border-red-100">Cancel Order (${45 - diffSeconds}s)</button>` : ''}
+                    ${canCancel ? `
+                        <button onclick="cancelOrder(${o.id})" class="w-full bg-red-50 text-red-500 py-2 rounded-xl text-[10px] font-black uppercase border border-red-100">
+                            Cancel Order (${45 - diffSeconds}s)
+                        </button>
+                    ` : ''}
                 </div>
                 `;
             }).join('');
         }
 
-        // ADMIN RENDER LOGIC WITH NEW BUTTONS
+        // --- UPDATED ADMIN RENDER LOGIC ---
         function renderAdmin() {
-            const active = orders.filter(o => o.status !== 'Completed');
+            const active = orders.filter(o => o.status !== 'Completed' && o.status !== 'Cancelled');
             document.getElementById('admin-orders-list').innerHTML = active.map(o => {
-                // 1. Timer Logic for Admin Cancel (30 Seconds)
+                // 2. Timer Logic (30 Seconds)
                 const createdTime = new Date(o.created_at).getTime();
                 const now = new Date().getTime();
-                const diffSeconds = Math.floor((now - createdTime) / 1000);
-                const showCancel = diffSeconds < 30 && o.status !== 'Cancelled';
+                const diffSec = Math.floor((now - createdTime) / 1000);
+                const showCancel = diffSec < 30 && o.status === 'Pending';
 
                 return `
-                <div class="bg-white p-6 rounded-[32px] border border-zinc-100 shadow-sm flex justify-between items-center animate-fade">
-                    <div class="flex-grow">
+                <div class="bg-white p-6 rounded-[32px] border border-zinc-100 shadow-sm flex flex-col md:flex-row justify-between items-center animate-fade">
+                    <div class="flex-grow w-full mb-4 md:mb-0">
                         <div class="flex items-center gap-2 mb-2">
                             <span class="text-[10px] font-black px-2 py-1 bg-zinc-100 rounded-lg">#ORD-${o.id}</span>
                             <span class="text-[10px] font-black px-2 py-1 bg-zinc-50 text-zinc-400 rounded-lg">${o.device_id || 'OLD'}</span>
                         </div>
-                        <h4 class="text-xl font-black">${o.customer_name}</h4><p class="text-xs text-zinc-500 mt-2">${o.item_name}</p>
+                        <h4 class="text-xl font-black">${o.customer_name}</h4>
+                        <p class="text-xs text-zinc-500 mt-2">${o.item_name}</p>
                     </div>
-                    
-                    <div class="flex flex-col gap-2 items-end">
-                        ${o.status === 'Cancelled' ? `
-                            <button onclick="updateOrderStatus(${o.id}, 'Completed')" class="bg-green-600 text-white px-6 py-4 rounded-2xl font-bold text-xs uppercase shadow-lg">Payment Done</button>
-                        ` : `
-                            <button onclick="updateOrderStatus(${o.id}, '${o.status === 'Pending' ? 'Ready' : 'Completed'}')" class="bg-zinc-900 text-white px-6 py-4 rounded-2xl font-bold text-xs uppercase shadow-lg min-w-[120px]">
-                                ${o.status === 'Pending' ? 'Ready' : 'Done'}
-                            </button>
-                            
-                            ${showCancel ? `
-                                <button onclick="updateOrderStatus(${o.id}, 'Cancelled')" class="text-[10px] font-black text-red-500 uppercase px-4 py-2 bg-red-50 rounded-xl border border-red-100">
-                                    Cancel Order (${30 - diffSeconds}s)
-                                </button>
-                            ` : ''}
-                        `}
+                    <div class="flex gap-2 w-full md:w-auto">
+                        ${showCancel ? `
+                            <button onclick="cancelOrder(${o.id})" class="flex-grow md:flex-none bg-red-50 text-red-600 px-6 py-4 rounded-2xl font-bold text-[10px] uppercase border border-red-100">Cancel (${30-diffSec}s)</button>
+                        ` : ''}
+                        
+                        ${o.status === 'Pending' ? `
+                            <button onclick="updateOrderStatus(${o.id}, 'Ready')" class="flex-grow md:flex-none bg-zinc-900 text-white px-6 py-4 rounded-2xl font-bold text-xs uppercase shadow-lg">Ready</button>
+                        ` : (o.status === 'Ready' ? `
+                            <button onclick="updateOrderStatus(${o.id}, 'Completed')" class="flex-grow md:flex-none bg-green-600 text-white px-6 py-4 rounded-2xl font-bold text-xs uppercase shadow-lg">Payment Done</button>
+                        ` : '')}
                     </div>
                 </div>
             `;}).join('');
