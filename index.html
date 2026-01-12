@@ -32,7 +32,7 @@
     <div id="cancel-banner" class="hidden fixed top-8 left-1/2 -translate-x-1/2 z-[200] w-[90%] max-w-sm">
         <div class="bg-red-600 text-white p-5 rounded-3xl shadow-2xl flex items-center gap-4 border border-white/10">
             <div class="h-10 w-10 bg-white rounded-full flex items-center justify-center text-xl">❌</div>
-            <div><p class="font-bold text-sm">Order Unavailable</p><p class="text-[10px] text-red-100">Sorry, your order is currently unavailable. Please try something else.</p></div>
+            <div><p class="font-bold text-sm">Order Cancelled</p><p class="text-[10px] text-red-100">Your order was cancelled by the store.</p></div>
         </div>
     </div>
 
@@ -125,18 +125,16 @@
         let cart = [];
         let orders = [];
         let isAdminLoggedIn = false;
-        
-        // Notification State Tracker
         const notifiedEvents = new Set();
         let lastKnownOrderData = "";
 
-        // Audio Elements
+        // Premium Sounds
         const sounds = {
-            newOrder: new Audio('https://pixabay.com/sound-effects/search/alert%20tone/-preview.mp3'),
-            custCancelled: new Audio('https://pixabay.com/sound-effects/search/order%20cancel%20/-preview.mp3'), // Admin hears this
-            adminCancelled: new Audio('https://pixabay.com/sound-effects/search/order%20cancel%20/-preview.mp3'), // Cust hears this
-            orderReady: new Audio('https://pixabay.com/sound-effects/search/alert%20tone/-preview.mp3'),
-            
+            newOrder: new Audio('https://assets.mixkit.co/active_storage/sfx/2040/2040-preview.mp3'),
+            custCancelled: new Audio('https://assets.mixkit.co/active_storage/sfx/1103/1103-preview.mp3'), // Admin hears this
+            adminCancelled: new Audio('https://assets.mixkit.co/active_storage/sfx/2513/2513-preview.mp3'), // Cust hears this
+            orderReady: new Audio('https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3'),
+            orderSent: new Audio('https://assets.mixkit.co/active_storage/sfx/2571/2571-preview.mp3')
         };
 
         window.addEventListener('hashchange', checkRoute);
@@ -163,8 +161,6 @@
             const { data, error } = await _supabase.from('orders').select('*').order('id', { ascending: false });
             if (!error && data) {
                 processNotifications(data);
-                
-                // Anti-Flicker: Only update if content changed
                 const dataString = JSON.stringify(data);
                 if (dataString !== lastKnownOrderData) {
                     orders = data;
@@ -184,12 +180,12 @@
 
                 // 1. ADMIN PANEL LOGIC
                 if (isAdminLoggedIn) {
-                    // New Order Sound (Admin Only)
+                    // Alert Admin when a new order arrives
                     if (!oldOrder) {
                         sounds.newOrder.play().catch(() => {});
                         notifiedEvents.add(eventKey);
                     }
-                    // Customer Cancelled Sound (Admin Only)
+                    // Alert Admin when Customer cancels order
                     else if (oldOrder.status !== 'Cancelled' && order.status === 'Cancelled' && order.cancelled_by === 'Customer') {
                         sounds.custCancelled.play().catch(() => {});
                         notifiedEvents.add(eventKey);
@@ -198,13 +194,13 @@
                 
                 // 2. CUSTOMER PANEL LOGIC
                 if (!isAdminLoggedIn && order.device_id === DEVICE_ID) {
-                    // Admin Cancelled Sound (Customer Only)
+                    // Alert Customer when Admin cancels order
                     if (oldOrder && oldOrder.status !== 'Cancelled' && order.status === 'Cancelled' && order.cancelled_by === 'Admin') {
                         sounds.adminCancelled.play().catch(() => {});
                         const b = document.getElementById('cancel-banner'); b.classList.remove('hidden'); setTimeout(()=>b.classList.add('hidden'), 5000);
                         notifiedEvents.add(eventKey);
                     }
-                    // Order Ready Sound
+                    // Alert Customer when order is Ready
                     else if (oldOrder && oldOrder.status === 'Pending' && order.status === 'Ready') {
                         sounds.orderReady.play().catch(() => {});
                         const b = document.getElementById('ready-banner'); b.classList.remove('hidden'); setTimeout(()=>b.classList.add('hidden'), 4000);
@@ -216,7 +212,7 @@
 
         async function sendOrder() {
             const name = document.getElementById('cust-name').value.trim();
-            if(!name || cart.length === 0) return alert("Missing Info");
+            if(!name || cart.length === 0) return alert("Please enter name and add items.");
             const itemsText = cart.map(it => `${it.name} x${it.qty}${it.note ? ` (${it.note})` : ''}`).join(', ');
             
             const { error } = await _supabase.from('orders').insert([{ 
@@ -236,9 +232,8 @@
             }
         }
 
-        // --- UPDATED CANCEL LOGIC TO IDENTIFY WHO CANCELLED ---
         async function cancelOrder(id) {
-            if(confirm("Are you sure?")) {
+            if(confirm("Are you sure you want to cancel?")) {
                 const initiator = isAdminLoggedIn ? 'Admin' : 'Customer';
                 await _supabase.from('orders').update({ 
                     status: 'Cancelled', 
@@ -254,6 +249,7 @@
         }
 
         function renderAdmin() {
+            // Live orders exclude completed and cancelled ones
             const active = orders.filter(o => o.status !== 'Completed' && o.status !== 'Cancelled');
             const adminList = document.getElementById('admin-orders-list');
             
@@ -262,9 +258,9 @@
                     <div class="flex-grow">
                         <div class="flex items-center gap-2 mb-2">
                             <span class="text-[10px] font-black px-2 py-1 bg-zinc-100 rounded-lg">#ORD-${o.id}</span>
-                            <span class="text-[10px] font-black px-2 py-1 bg-zinc-50 text-zinc-400 rounded-lg">${o.device_id || 'OLD'}</span>
                         </div>
-                        <h4 class="text-xl font-black">${o.customer_name}</h4><p class="text-xs text-zinc-500 mt-2">${o.item_name}</p>
+                        <h4 class="text-xl font-black">${o.customer_name}</h4>
+                        <p class="text-xs text-zinc-500 mt-2">${o.item_name}</p>
                         <p class="text-sm font-bold text-zinc-900 mt-1">Bill: ₹${o.total_bill || '0'}</p>
                     </div>
                     <div class="flex gap-2 w-full md:w-auto">
@@ -278,14 +274,11 @@
                 </div>
             `).join('');
 
-            // Special Message for Customer-Cancelled Orders in Admin
-            const custCancelled = orders.filter(o => o.status === 'Cancelled' && o.cancelled_by === 'Customer');
-            custCancelled.forEach(o => {
-                if(!notifiedEvents.has(`${o.id}-msg`)){
-                    console.log(`Order ${o.id} was cancelled by customer.`);
-                    notifiedEvents.add(`${o.id}-msg`);
-                }
-            });
+            // Inform admin of any recently cancelled orders by customer
+            const recentCustCancelled = orders.filter(o => o.status === 'Cancelled' && o.cancelled_by === 'Customer');
+            if(recentCustCancelled.length > 0 && isAdminLoggedIn) {
+                // Potential placeholder for a 'Cancelled History' UI if needed
+            }
         }
 
         function renderCustomerStatus() {
@@ -312,7 +305,6 @@
             }).join('');
         }
 
-        // --- STANDARD UTILITY FUNCTIONS ---
         function renderMenu(items) {
             document.getElementById('menu-grid').innerHTML = items.map(item => `
                 <div class="item-card bg-white rounded-[32px] p-4 border border-zinc-100 shadow-sm animate-fade ${!item.is_available ? 'opacity-50 grayscale' : ''}">
