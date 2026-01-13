@@ -125,11 +125,11 @@
         const notifiedEvents = new Set();
         let lastKnownOrderData = "";
 
-        // Premium Sounds Updated
+        // REPLACED WITH HIGHER QUALITY SOUNDS
         const sounds = {
             newOrder: new Audio('https://assets.mixkit.co/active_storage/sfx/2040/2040-preview.mp3'),
-            custCancelled: new Audio('https://assets.mixkit.co/active_storage/sfx/1103/1103-preview.mp3'), // Alert Sound for Admin
-            adminCancelled: new Audio('https://assets.mixkit.co/active_storage/sfx/2513/2513-preview.mp3'), // Error/Alert for Customer
+            custCancelled: new Audio('https://assets.mixkit.co/active_storage/sfx/1000/1000-preview.mp3'), // Crystal Bell for Admin
+            adminCancelled: new Audio('https://assets.mixkit.co/active_storage/sfx/2357/2357-preview.mp3'), // Modern Alert for Customer
             orderReady: new Audio('https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3'),
             orderSent: new Audio('https://assets.mixkit.co/active_storage/sfx/2571/2571-preview.mp3')
         };
@@ -175,29 +175,23 @@
 
                 if (notifiedEvents.has(eventKey)) return;
 
-                // 1. ADMIN PANEL NOTIFICATIONS
                 if (isAdminLoggedIn) {
-                    // Alert Admin when a NEW order arrives
                     if (!oldOrder) {
                         sounds.newOrder.play().catch(() => {});
                         notifiedEvents.add(eventKey);
                     }
-                    // Alert Admin when order is CANCELLED BY CUSTOMER
                     else if (oldOrder.status !== 'Cancelled' && order.status === 'Cancelled' && order.cancelled_by === 'Customer') {
                         sounds.custCancelled.play().catch(() => {});
                         notifiedEvents.add(eventKey);
                     }
                 } 
                 
-                // 2. CUSTOMER PANEL NOTIFICATIONS
                 if (!isAdminLoggedIn && order.device_id === DEVICE_ID) {
-                    // Alert Customer when order is CANCELLED BY ADMIN
                     if (oldOrder && oldOrder.status !== 'Cancelled' && order.status === 'Cancelled' && order.cancelled_by === 'Admin') {
                         sounds.adminCancelled.play().catch(() => {});
                         const b = document.getElementById('cancel-banner'); b.classList.remove('hidden'); setTimeout(()=>b.classList.add('hidden'), 5000);
                         notifiedEvents.add(eventKey);
                     }
-                    // Alert Customer when order is READY
                     else if (oldOrder && oldOrder.status === 'Pending' && order.status === 'Ready') {
                         sounds.orderReady.play().catch(() => {});
                         const b = document.getElementById('ready-banner'); b.classList.remove('hidden'); setTimeout(()=>b.classList.add('hidden'), 4000);
@@ -211,7 +205,6 @@
             const name = document.getElementById('cust-name').value.trim();
             if(!name || cart.length === 0) return alert("Please enter name and add items.");
             const itemsText = cart.map(it => `${it.name} x${it.qty}${it.note ? ` (${it.note})` : ''}`).join(', ');
-            
             const { error } = await _supabase.from('orders').insert([{ 
                 customer_name: name, 
                 item_name: itemsText, 
@@ -220,7 +213,6 @@
                 device_id: DEVICE_ID,
                 total_bill: cart.reduce((s,i) => s + (i.price*i.qty), 0)
             }]);
-            
             if (!error) {
                 sounds.orderSent.play().catch(()=>{}); cart = []; updateUI(); toggleCart(false);
                 document.getElementById('order-sent-banner').classList.remove('hidden'); 
