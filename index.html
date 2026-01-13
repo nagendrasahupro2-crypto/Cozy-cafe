@@ -124,7 +124,9 @@
         let isAdminLoggedIn = false;
         const notifiedEvents = new Set();
         let lastKnownOrderData = "";
-        let lastStatusHTML = ""; // Added to track and prevent flicker
+        let lastStatusHTML = ""; 
+        // Track orders that admin has acknowledged as cancelled
+        const adminAcknowledgedCancellations = new Set(); 
 
         const sounds = {
             newOrder: new Audio('https://assets.mixkit.co/active_storage/sfx/2040/2040-preview.mp3'),
@@ -181,6 +183,7 @@
                         notifiedEvents.add(eventKey);
                     }
                     else if (oldOrder.status !== 'Cancelled' && order.status === 'Cancelled' && order.cancelled_by === 'Customer') {
+                        // Sound plays for customer cancellation
                         sounds.custCancelled.play().catch(() => {});
                         notifiedEvents.add(eventKey);
                     }
@@ -232,26 +235,48 @@
             }
         }
 
+        // Action for admin to acknowledge and clear customer-cancelled order
+        function acknowledgeCancellation(id) {
+            sounds.custCancelled.pause();
+            sounds.custCancelled.currentTime = 0;
+            adminAcknowledgedCancellations.add(id);
+            renderAdmin();
+        }
+
         async function updateOrderStatus(id, s) { 
             await _supabase.from('orders').update({ status: s }).eq('id', id); 
             fetchOrders(); 
         }
 
         function renderAdmin() {
-            const active = orders.filter(o => o.status !== 'Completed' && o.status !== 'Cancelled');
+            // Modified to include customer-cancelled orders that haven't been acknowledged
+            const active = orders.filter(o => {
+                const isCompleted = o.status === 'Completed';
+                const isAdminCancelled = o.status === 'Cancelled' && o.cancelled_by === 'Admin';
+                const isAcknowledged = adminAcknowledgedCancellations.has(o.id);
+                
+                return !isCompleted && !isAdminCancelled && !isAcknowledged;
+            });
+
             const adminList = document.getElementById('admin-orders-list');
-            adminList.innerHTML = active.map(o => `
+            adminList.innerHTML = active.map(o => {
+                const isCustCancelled = o.status === 'Cancelled' && o.cancelled_by === 'Customer';
+                
+                return `
                 <div class="bg-white p-6 rounded-[32px] border border-zinc-100 shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center gap-4 animate-fade">
                     <div class="flex-grow">
                         <div class="flex items-center gap-2 mb-2">
                             <span class="text-[10px] font-black px-2 py-1 bg-zinc-100 rounded-lg">#ORD-${o.id}</span>
+                            ${isCustCancelled ? `<span class="text-[10px] font-black px-2 py-1 bg-red-100 text-red-600 rounded-lg uppercase">Customer Cancelled</span>` : ''}
                         </div>
                         <h4 class="text-xl font-black">${o.customer_name}</h4>
                         <p class="text-xs text-zinc-500 mt-2">${o.item_name}</p>
                         <p class="text-sm font-bold text-zinc-900 mt-1">Bill: ₹${o.total_bill || '0'}</p>
                     </div>
                     <div class="flex gap-2 w-full md:w-auto">
-                        ${o.status === 'Pending' ? `
+                        ${isCustCancelled ? `
+                            <button onclick="acknowledgeCancellation(${o.id})" class="flex-1 md:flex-none bg-red-600 text-white px-6 py-4 rounded-2xl font-bold text-xs uppercase">Order Cancelled</button>
+                        ` : o.status === 'Pending' ? `
                             <button onclick="updateOrderStatus(${o.id}, 'Ready')" class="flex-1 md:flex-none bg-zinc-900 text-white px-6 py-4 rounded-2xl font-bold text-xs uppercase">Ready</button>
                             <button onclick="cancelOrder(${o.id})" class="flex-1 md:flex-none bg-red-100 text-red-600 px-6 py-4 rounded-2xl font-bold text-xs uppercase">Cancel</button>
                         ` : `
@@ -259,10 +284,9 @@
                         `}
                     </div>
                 </div>
-            `).join('');
+            `;}).join('');
         }
 
-        // TASK 1 & 2: Fixed flickering and added bill for Ready status
         function renderCustomerStatus() {
             const active = orders.filter(o => (o.status !== 'Completed' && o.status !== 'Cancelled') && o.device_id === DEVICE_ID);
             const statusBox = document.getElementById('customer-order-status');
@@ -280,7 +304,6 @@
             const newHTML = active.map(o => {
                 const diffSeconds = Math.floor((Date.now() - new Date(o.created_at).getTime()) / 1000);
                 const canCancel = diffSeconds < 45 && o.status === 'Pending';
-                // Show total bill only when status is 'Ready'
                 const billDisplay = o.status === 'Ready' ? `<span class="block mt-1 text-[12px] font-black text-indigo-600">Total Bill: ₹${o.total_bill || 0}</span>` : '';
                 
                 return `
@@ -298,7 +321,6 @@
                 `;
             }).join('');
 
-            // Prevent re-rendering if content hasn't changed to stop flickering
             if (newHTML !== lastStatusHTML) {
                 document.getElementById('status-list').innerHTML = newHTML;
                 lastStatusHTML = newHTML;
