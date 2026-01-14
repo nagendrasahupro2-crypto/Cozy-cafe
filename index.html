@@ -68,10 +68,15 @@
         <main id="menu-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-8"></main>
     </section>
 
-    <section id="admin-panel" class="hidden max-w-5xl mx-auto px-5 py-10">
+    <section id="admin-panel" class="hidden max-w-5xl mx-auto px-5 py-10 relative">
         <div class="flex justify-between items-center mb-10">
             <h2 class="text-4xl font-extrabold text-zinc-900">Admin</h2>
-            <button onclick="location.hash=''" class="text-[10px] font-black uppercase text-zinc-400">Exit Admin</button>
+            <div class="flex items-center gap-4">
+                <button onclick="toggleAdminBasket(true)" class="p-3 bg-orange-500 text-white rounded-2xl shadow-lg transition-transform active:scale-90">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z" /></svg>
+                </button>
+                <button onclick="location.hash=''" class="text-[10px] font-black uppercase text-zinc-400">Exit Admin</button>
+            </div>
         </div>
         <div class="flex gap-4 mb-8">
             <button onclick="switchAdminTab('orders')" id="tab-orders" class="px-6 py-2 rounded-full bg-zinc-900 text-white font-bold text-sm">Live Orders</button>
@@ -84,6 +89,28 @@
             <div id="admin-menu-list" class="grid gap-4"></div>
         </div>
     </section>
+
+    <div id="admin-basket-overlay" class="hidden fixed inset-0 bg-zinc-900/60 z-[200] backdrop-blur-md transition-all" onclick="toggleAdminBasket(false)">
+        <div id="admin-basket-sidebar" class="absolute right-0 top-0 h-full w-full sm:w-[500px] bg-white shadow-2xl flex flex-col translate-x-full transition-transform duration-500" onclick="event.stopPropagation()">
+            <div class="p-8 border-b flex justify-between items-center">
+                <h2 class="text-2xl font-black">Internal Order</h2>
+                <button onclick="toggleAdminBasket(false)" class="text-2xl">&times;</button>
+            </div>
+            <div id="admin-basket-tabs" class="flex gap-2 overflow-x-auto p-4 border-b no-scrollbar bg-zinc-50"></div>
+            <div id="admin-internal-menu" class="flex-grow overflow-y-auto p-6 space-y-4"></div>
+            <div id="admin-order-summary" class="p-8 bg-zinc-50 border-t">
+                <div id="admin-cart-items" class="mb-4 space-y-2"></div>
+                <div class="flex justify-between items-center mb-6">
+                    <span class="font-bold text-zinc-400 text-xs uppercase">Order Total</span>
+                    <span id="admin-cart-total" class="text-3xl font-black">₹0</span>
+                </div>
+                <div id="admin-action-area">
+                    <button id="btn-save-admin-order" onclick="saveAdminOrder()" class="w-full bg-zinc-900 text-white py-5 rounded-2xl font-bold">Save Order</button>
+                    <button id="btn-pay-admin-order" onclick="completeAdminOrder()" class="hidden w-full bg-green-600 text-white py-5 rounded-2xl font-bold">Payment Done</button>
+                </div>
+            </div>
+        </div>
+    </div>
 
     <section id="admin-login-panel" class="hidden max-w-md mx-auto px-5 py-20">
         <div class="bg-white p-10 rounded-[40px] border shadow-2xl">
@@ -120,12 +147,12 @@
 
         let menuData = []; 
         let cart = [];
+        let adminCart = []; // Separate cart for Admin Internal Order
         let orders = [];
         let isAdminLoggedIn = false;
         const notifiedEvents = new Set();
         let lastKnownOrderData = "";
         let lastStatusHTML = ""; 
-        // Track orders that admin has acknowledged as cancelled
         const adminAcknowledgedCancellations = new Set(); 
 
         const sounds = {
@@ -152,7 +179,10 @@
                 menuData = data;
                 renderMenu(menuData);
                 renderCategoryBar();
-                if(isAdminLoggedIn) renderAdminMenu();
+                if(isAdminLoggedIn) {
+                    renderAdminMenu();
+                    renderAdminInternalMenu('All'); // Initial load for internal panel
+                }
             }
         }
 
@@ -170,6 +200,95 @@
             }
         }
 
+        // Logic to toggle Admin Internal Order Sidebar
+        function toggleAdminBasket(s) {
+            const overlay = document.getElementById('admin-basket-overlay');
+            const sidebar = document.getElementById('admin-basket-sidebar');
+            overlay.classList.toggle('hidden', !s);
+            sidebar.style.transform = s ? 'translateX(0)' : 'translateX(100%)';
+            if(s) {
+                adminCart = [];
+                updateAdminCartUI();
+                document.getElementById('btn-save-admin-order').classList.remove('hidden');
+                document.getElementById('btn-pay-admin-order').classList.add('hidden');
+                renderAdminInternalTabs();
+                renderAdminInternalMenu('All');
+            }
+        }
+
+        // Render categories for Admin Internal Panel
+        function renderAdminInternalTabs() {
+            const cats = ['All', ...new Set(menuData.map(m => m.category))];
+            document.getElementById('admin-basket-tabs').innerHTML = cats.map(c => `
+                <button onclick="renderAdminInternalMenu('${c}')" class="px-4 py-1 rounded-full bg-white border text-[10px] font-bold whitespace-nowrap active:bg-zinc-900 active:text-white transition-colors">${c}</button>
+            `).join('');
+        }
+
+        // Render Grouped Menu inside Admin Panel
+        function renderAdminInternalMenu(cat) {
+            const filtered = cat === 'All' ? menuData : menuData.filter(m => m.category === cat);
+            document.getElementById('admin-internal-menu').innerHTML = filtered.map(item => `
+                <div class="flex items-center justify-between bg-zinc-50 p-3 rounded-2xl border border-zinc-100">
+                    <div class="flex items-center gap-3">
+                        <img src="${item.image_url}" class="w-10 h-10 rounded-lg object-cover">
+                        <div><p class="text-xs font-bold">${item.name}</p><p class="text-[9px] text-zinc-400">₹${item.price}</p></div>
+                    </div>
+                    <button onclick="addToAdminCart(${item.id})" class="h-8 w-8 bg-zinc-900 text-white rounded-lg font-bold">+</button>
+                </div>
+            `).join('');
+        }
+
+        // Admin Internal Cart Logic
+        function addToAdminCart(id) {
+            const item = menuData.find(m => m.id === id);
+            const exist = adminCart.find(c => c.id === id);
+            if(exist) exist.qty++; else adminCart.push({...item, qty: 1});
+            updateAdminCartUI();
+        }
+
+        function updateAdminCartUI() {
+            document.getElementById('admin-cart-items').innerHTML = adminCart.map((item, i) => `
+                <div class="flex justify-between items-center text-xs">
+                    <span class="font-bold">${item.name} x${item.qty}</span>
+                    <div class="flex gap-2">
+                        <button onclick="changeAdminQty(${i}, -1)" class="w-5 h-5 bg-zinc-200 rounded text-center">-</button>
+                        <button onclick="changeAdminQty(${i}, 1)" class="w-5 h-5 bg-zinc-900 text-white rounded text-center">+</button>
+                    </div>
+                </div>
+            `).join('');
+            document.getElementById('admin-cart-total').innerText = `₹${adminCart.reduce((s,i) => s + (i.price*i.qty), 0)}`;
+        }
+
+        function changeAdminQty(i, d) {
+            adminCart[i].qty += d;
+            if(adminCart[i].qty < 1) adminCart.splice(i, 1);
+            updateAdminCartUI();
+        }
+
+        // Step 2 & 3: Save and Complete Admin Order
+        async function saveAdminOrder() {
+            if(adminCart.length === 0) return alert("Select items first");
+            document.getElementById('btn-save-admin-order').classList.add('hidden');
+            document.getElementById('btn-pay-admin-order').classList.remove('hidden');
+        }
+
+        async function completeAdminOrder() {
+            const itemsText = adminCart.map(it => `${it.name} x${it.qty}`).join(', ');
+            const { error } = await _supabase.from('orders').insert([{ 
+                customer_name: "Internal Admin Order", 
+                item_name: itemsText, 
+                quantity: adminCart.reduce((s,i) => s + i.qty, 0), 
+                status: 'Completed', // Direct completed so doesn't show in live lists
+                created_by: 'ADMIN', // Marked as Admin Order
+                total_bill: adminCart.reduce((s,i) => s + (i.price*i.qty), 0)
+            }]);
+            
+            if(!error) {
+                toggleAdminBasket(false);
+                alert("Order recorded successfully");
+            }
+        }
+
         function processNotifications(newList) {
             newList.forEach(order => {
                 const oldOrder = orders.find(o => o.id === order.id);
@@ -183,7 +302,6 @@
                         notifiedEvents.add(eventKey);
                     }
                     else if (oldOrder.status !== 'Cancelled' && order.status === 'Cancelled' && order.cancelled_by === 'Customer') {
-                        // Sound plays for customer cancellation
                         sounds.custCancelled.play().catch(() => {});
                         notifiedEvents.add(eventKey);
                     }
@@ -235,7 +353,6 @@
             }
         }
 
-        // Action for admin to acknowledge and clear customer-cancelled order
         function acknowledgeCancellation(id) {
             sounds.custCancelled.pause();
             sounds.custCancelled.currentTime = 0;
@@ -249,13 +366,14 @@
         }
 
         function renderAdmin() {
-            // Modified to include customer-cancelled orders that haven't been acknowledged
+            // Updated to hide Admin-created orders from active list
             const active = orders.filter(o => {
                 const isCompleted = o.status === 'Completed';
                 const isAdminCancelled = o.status === 'Cancelled' && o.cancelled_by === 'Admin';
                 const isAcknowledged = adminAcknowledgedCancellations.has(o.id);
+                const isAdminCreated = o.created_by === 'ADMIN'; // Task check
                 
-                return !isCompleted && !isAdminCancelled && !isAcknowledged;
+                return !isCompleted && !isAdminCancelled && !isAcknowledged && !isAdminCreated;
             });
 
             const adminList = document.getElementById('admin-orders-list');
@@ -288,7 +406,8 @@
         }
 
         function renderCustomerStatus() {
-            const active = orders.filter(o => (o.status !== 'Completed' && o.status !== 'Cancelled') && o.device_id === DEVICE_ID);
+            // Task: Hide Admin-created orders from customer panel too
+            const active = orders.filter(o => (o.status !== 'Completed' && o.status !== 'Cancelled') && o.device_id === DEVICE_ID && o.created_by !== 'ADMIN');
             const statusBox = document.getElementById('customer-order-status');
             
             if (active.length === 0) {
