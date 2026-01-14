@@ -147,7 +147,7 @@
 
         let menuData = []; 
         let cart = [];
-        let adminCart = []; // Separate cart for Admin Internal Order
+        let adminCart = []; 
         let orders = [];
         let isAdminLoggedIn = false;
         const notifiedEvents = new Set();
@@ -181,7 +181,6 @@
                 renderCategoryBar();
                 if(isAdminLoggedIn) {
                     renderAdminMenu();
-                    renderAdminInternalMenu('All'); // Initial load for internal panel
                 }
             }
         }
@@ -200,7 +199,6 @@
             }
         }
 
-        // Logic to toggle Admin Internal Order Sidebar
         function toggleAdminBasket(s) {
             const overlay = document.getElementById('admin-basket-overlay');
             const sidebar = document.getElementById('admin-basket-sidebar');
@@ -216,7 +214,6 @@
             }
         }
 
-        // Render categories for Admin Internal Panel
         function renderAdminInternalTabs() {
             const cats = ['All', ...new Set(menuData.map(m => m.category))];
             document.getElementById('admin-basket-tabs').innerHTML = cats.map(c => `
@@ -224,7 +221,6 @@
             `).join('');
         }
 
-        // Render Grouped Menu inside Admin Panel
         function renderAdminInternalMenu(cat) {
             const filtered = cat === 'All' ? menuData : menuData.filter(m => m.category === cat);
             document.getElementById('admin-internal-menu').innerHTML = filtered.map(item => `
@@ -238,7 +234,6 @@
             `).join('');
         }
 
-        // Admin Internal Cart Logic
         function addToAdminCart(id) {
             const item = menuData.find(m => m.id === id);
             const exist = adminCart.find(c => c.id === id);
@@ -265,26 +260,29 @@
             updateAdminCartUI();
         }
 
-        // Step 2 & 3: Save and Complete Admin Order
         async function saveAdminOrder() {
             if(adminCart.length === 0) return alert("Select items first");
             document.getElementById('btn-save-admin-order').classList.add('hidden');
             document.getElementById('btn-pay-admin-order').classList.remove('hidden');
         }
 
+        // Modified: Clear logic added for admin basket after payment
         async function completeAdminOrder() {
             const itemsText = adminCart.map(it => `${it.name} x${it.qty}`).join(', ');
             const { error } = await _supabase.from('orders').insert([{ 
                 customer_name: "Internal Admin Order", 
                 item_name: itemsText, 
                 quantity: adminCart.reduce((s,i) => s + i.qty, 0), 
-                status: 'Completed', // Direct completed so doesn't show in live lists
-                created_by: 'ADMIN', // Marked as Admin Order
+                status: 'Completed', 
+                created_by: 'ADMIN', 
                 total_bill: adminCart.reduce((s,i) => s + (i.price*i.qty), 0)
             }]);
             
             if(!error) {
-                toggleAdminBasket(false);
+                // Task: Clear basket and close sidebar
+                adminCart = []; 
+                updateAdminCartUI(); 
+                toggleAdminBasket(false); 
                 alert("Order recorded successfully");
             }
         }
@@ -366,12 +364,11 @@
         }
 
         function renderAdmin() {
-            // Updated to hide Admin-created orders from active list
             const active = orders.filter(o => {
                 const isCompleted = o.status === 'Completed';
                 const isAdminCancelled = o.status === 'Cancelled' && o.cancelled_by === 'Admin';
                 const isAcknowledged = adminAcknowledgedCancellations.has(o.id);
-                const isAdminCreated = o.created_by === 'ADMIN'; // Task check
+                const isAdminCreated = o.created_by === 'ADMIN'; 
                 
                 return !isCompleted && !isAdminCancelled && !isAcknowledged && !isAdminCreated;
             });
@@ -406,7 +403,6 @@
         }
 
         function renderCustomerStatus() {
-            // Task: Hide Admin-created orders from customer panel too
             const active = orders.filter(o => (o.status !== 'Completed' && o.status !== 'Cancelled') && o.device_id === DEVICE_ID && o.created_by !== 'ADMIN');
             const statusBox = document.getElementById('customer-order-status');
             
@@ -506,7 +502,7 @@
         function filterMenu(c) { document.querySelectorAll('.cat-btn').forEach(b => b.classList.remove('active-cat')); event.target.classList.add('active-cat'); renderMenu(c === 'All' ? menuData : menuData.filter(m => m.category === c)); }
         function switchAdminTab(tab) { document.getElementById('admin-orders-sec').classList.toggle('hidden', tab !== 'orders'); document.getElementById('admin-menu-sec').classList.toggle('hidden', tab !== 'menu'); document.getElementById('tab-orders').className = tab === 'orders' ? 'px-6 py-2 rounded-full bg-zinc-900 text-white font-bold text-sm' : 'px-6 py-2 rounded-full bg-zinc-100 text-zinc-400 font-bold text-sm'; document.getElementById('tab-menu').className = tab === 'menu' ? 'px-6 py-2 rounded-full bg-zinc-900 text-white font-bold text-sm' : 'px-6 py-2 rounded-full bg-zinc-100 text-zinc-400 font-bold text-sm'; }
         async function updateMenuField(id, field, value) { await _supabase.from('menu_items').update({ [field]: value }).eq('id', id); fetchMenu(); }
-        function renderAdminMenu() { document.getElementById('admin-menu-list').innerHTML = menuData.map(item => `<div class="bg-white p-5 rounded-3xl border border-zinc-100 shadow-sm flex items-center justify-between"><div class="flex items-center gap-4"><img src="${item.image_url}" class="w-16 h-16 rounded-2xl object-cover"><div><h4 class="font-bold text-zinc-900">${item.name}</h4><p class="text-xs text-zinc-400">₹${item.price}</p></div></div><div class="flex gap-2"><button onclick="const p=prompt('New Price:', ${item.price}); if(p) updateMenuField(${item.id}, 'price', parseInt(p))" class="px-4 py-2 bg-zinc-100 rounded-xl text-[10px] font-black uppercase">Rate</button><button onclick="updateMenuField(${item.id}, 'is_available', ${!item.is_available})" class="px-4 py-2 ${item.is_available ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-600'} rounded-xl text-[10px] font-black uppercase">${item.is_available ? 'Live' : 'Hidden'}</button></div></div>`).join(''); }
+        function renderAdminMenu() { document.getElementById('admin-menu-list').innerHTML = menuData.map(item => `<div class=\"bg-white p-5 rounded-3xl border border-zinc-100 shadow-sm flex items-center justify-between\"><div class=\"flex items-center gap-4\"><img src=\"${item.image_url}\" class=\"w-16 h-16 rounded-2xl object-cover\"><div><h4 class=\"font-bold text-zinc-900\">${item.name}</h4><p class=\"text-xs text-zinc-400\">₹${item.price}</p></div></div><div class=\"flex gap-2\"><button onclick=\"const p=prompt('New Price:', ${item.price}); if(p) updateMenuField(${item.id}, 'price', parseInt(p))\" class=\"px-4 py-2 bg-zinc-100 rounded-xl text-[10px] font-black uppercase\">Rate</button><button onclick=\"updateMenuField(${item.id}, 'is_available', ${!item.is_available})\" class=\"px-4 py-2 ${item.is_available ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-600'} rounded-xl text-[10px] font-black uppercase\">${item.is_available ? 'Live' : 'Hidden'}</button></div></div>`).join(''); }
     </script>
 </body>
 </html>
