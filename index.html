@@ -189,6 +189,12 @@
         async function fetchOrders() {
             const { data, error } = await _supabase.from('orders').select('*').order('id', { ascending: false });
             if (!error && data) {
+                // ADDED FIX: Automatically acknowledge historical customer-cancelled orders to prevent them reappearing on refresh
+                if (lastKnownOrderData === "") {
+                    data.filter(o => o.status === 'Cancelled' && o.cancelled_by === 'Customer')
+                        .forEach(o => adminAcknowledgedCancellations.add(o.id));
+                }
+
                 processNotifications(data);
                 const dataString = JSON.stringify(data);
                 if (dataString !== lastKnownOrderData) {
@@ -200,14 +206,13 @@
             }
         }
 
-        // --- Admin Internal Order Logic ---
         function toggleAdminBasket(s) {
             const overlay = document.getElementById('admin-basket-overlay');
             const sidebar = document.getElementById('admin-basket-sidebar');
             overlay.classList.toggle('hidden', !s);
             sidebar.style.transform = s ? 'translateX(0)' : 'translateX(100%)';
             if(s) {
-                adminCart = []; // Reset basket on open
+                adminCart = []; 
                 updateAdminCartUI();
                 document.getElementById('btn-save-admin-order').classList.remove('hidden');
                 document.getElementById('btn-pay-admin-order').classList.add('hidden');
@@ -225,7 +230,6 @@
 
         function renderAdminInternalMenu(cat) {
             const filtered = cat === 'All' ? menuData : menuData.filter(m => m.category === cat);
-            // Task: Removed photos, showing only text list
             document.getElementById('admin-internal-menu').innerHTML = filtered.map(item => `
                 <div class="flex items-center justify-between bg-zinc-50 p-4 rounded-xl border border-zinc-100 mb-1">
                     <div>
@@ -274,7 +278,6 @@
         }
 
         async function completeAdminOrder() {
-            // Task: Save to Supabase with created_by: 'ADMIN' and Clear basket
             const itemsText = adminCart.map(it => `${it.name} x${it.qty}`).join(', ');
             const total = adminCart.reduce((s,i) => s + (i.price*i.qty), 0);
             
@@ -288,9 +291,9 @@
             }]);
             
             if(!error) {
-                adminCart = []; // Task: Order admin basket se ht jana chahiye
+                adminCart = []; 
                 updateAdminCartUI();
-                toggleAdminBasket(false); // Task: Close on payment done
+                toggleAdminBasket(false); 
                 alert("Internal order recorded.");
                 fetchOrders();
             } else {
@@ -298,7 +301,6 @@
             }
         }
 
-        // --- Notifications and Global Flow ---
         function processNotifications(newList) {
             newList.forEach(order => {
                 const oldOrder = orders.find(o => o.id === order.id);
@@ -309,6 +311,10 @@
                 if (isAdminLoggedIn) {
                     if (!oldOrder) {
                         sounds.newOrder.play().catch(() => {});
+                        notifiedEvents.add(eventKey);
+                    }
+                    else if (oldOrder.status !== 'Cancelled' && order.status === 'Cancelled' && order.cancelled_by === 'Customer') {
+                        sounds.custCancelled.play().catch(() => {});
                         notifiedEvents.add(eventKey);
                     }
                 } 
