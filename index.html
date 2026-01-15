@@ -311,10 +311,6 @@
                         sounds.newOrder.play().catch(() => {});
                         notifiedEvents.add(eventKey);
                     }
-                    else if (oldOrder.status !== 'Cancelled' && order.status === 'Cancelled' && order.cancelled_by === 'Customer') {
-                        sounds.custCancelled.play().catch(() => {});
-                        notifiedEvents.add(eventKey);
-                    }
                 } 
                 
                 if (!isAdminLoggedIn && order.device_id === DEVICE_ID) {
